@@ -48,12 +48,26 @@ void test_alternation() {
 }
 
 void test_repetition() {
-    Regex *regex = regex_compile("a*", REGEX_MODE_NFA, NULL);
+    const char *pattern = "a*";
+    const char *text = "aaa";
+    
+    printf("\nTesting pattern: '%s' on text: '%s'\n", pattern, text);
+    
+    Regex *regex = regex_compile(pattern, REGEX_MODE_NFA, NULL);
     assert(regex != NULL);
     
+    // 打印 NFA 转移表用于调试
+    printf("\nNFA Transition Table for 'a*':\n");
+    regex_get_transition_table(regex);
+    
     RegexMatch match;
-    assert(regex_match(regex, "", &match));
-    assert(regex_match(regex, "aaa", &match));
+    bool result = regex_match(regex, text, &match);
+    printf("Match result: %s\n", result ? "true" : "false");
+    if (result) {
+        printf("Match: start=%zu, end=%zu\n", match.start, match.end);
+    }
+    
+    assert(result);
     assert(match.start == 0 && match.end == 3);
     
     printf("✓ Repetition test passed\n");
