@@ -3,6 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+// 函数原型声明
+static void build_expr(NFA *nfa, AstNode *node, size_t *start, size_t *end);
+static void build_atom(NFA *nfa, AstNode *node, size_t *start, size_t *end);
+static void build_repeat(NFA *nfa, AstNode *node, size_t *start, size_t *end);
+static void build_concat(NFA *nfa, AstNode *node, size_t *start, size_t *end);
+static void build_alternation(NFA *nfa, AstNode *node, size_t *start, size_t *end);
+
 NFA* nfa_new(void) {
     NFA *nfa = calloc(1, sizeof(NFA));
     return nfa;
@@ -43,174 +50,213 @@ void nfa_add_epsilon(NFA *nfa, size_t from, size_t to) {
     nfa_add_edge(nfa, from, to, trans);
 }
 
-static size_t build_ast(NFA *nfa, AstNode *node) {
-    if (!node) return 0;
-    
-    size_t start = nfa->state_count;
+// 构建单个原子
+static void build_atom(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
+    *start = nfa->state_count;
     nfa_add_state(nfa, false);
     
     switch (node->type) {
         case AST_CHAR: {
-            size_t end = nfa->state_count;
+            *end = nfa->state_count;
             nfa_add_state(nfa, false);
             NFATransition trans = {.type = TRANS_CHAR, .ch = node->ch};
-            nfa_add_edge(nfa, start, end, trans);
-            return end;
+            nfa_add_edge(nfa, *start, *end, trans);
+            break;
         }
         case AST_ANY_CHAR: {
-            size_t end = nfa->state_count;
+            *end = nfa->state_count;
             nfa_add_state(nfa, false);
             NFATransition trans = {.type = TRANS_ANY_CHAR};
-            nfa_add_edge(nfa, start, end, trans);
-            return end;
-        }
-        case AST_CONCAT: {
-            size_t current = start;
-            for (size_t i = 0; i < node->concat.child_count; i++) {
-                size_t child_end = build_ast(nfa, node->concat.children[i]);
-                nfa_add_epsilon(nfa, current, child_end);
-                current = child_end;
-            }
-            return current;
-        }
-        case AST_ALTERNATION: {
-            size_t end = nfa->state_count;
-            nfa_add_state(nfa, false);
-            
-            for (size_t i = 0; i < node->alternation.child_count; i++) {
-                size_t child_end = build_ast(nfa, node->alternation.children[i]);
-                nfa_add_epsilon(nfa, start, child_end);
-                nfa_add_epsilon(nfa, child_end, end);
-            }
-            return end;
-        }
-        case AST_REPEAT: {
-            size_t end = nfa->state_count;
-            nfa_add_state(nfa, false);
-            
-            if (node->repeat.min == 0 && node->repeat.max == 0) {
-                // *: 0次或多次
-                nfa_add_epsilon(nfa, start, end);
-                size_t inner_end = build_ast(nfa, node->repeat.child);
-                nfa_add_epsilon(nfa, start, inner_end);
-                nfa_add_epsilon(nfa, inner_end, inner_end);
-                nfa_add_epsilon(nfa, inner_end, end);
-            } else if (node->repeat.min == 1 && node->repeat.max == 0) {
-                // +: 1次或多次
-                size_t inner_end = build_ast(nfa, node->repeat.child);
-                nfa_add_epsilon(nfa, start, inner_end);
-                nfa_add_epsilon(nfa, inner_end, inner_end);
-                nfa_add_epsilon(nfa, inner_end, end);
-            } else if (node->repeat.min == 0 && node->repeat.max == 1) {
-                // ?: 0次或1次
-                nfa_add_epsilon(nfa, start, end);
-                size_t inner_end = build_ast(nfa, node->repeat.child);
-                nfa_add_epsilon(nfa, start, inner_end);
-                nfa_add_epsilon(nfa, inner_end, end);
-            } else {
-                // {m,n}: m到n次
-                size_t current = start;
-                size_t max = node->repeat.max > 0 ? node->repeat.max : node->repeat.min;
-                for (size_t i = 0; i < max; i++) {
-                    size_t inner_end = build_ast(nfa, node->repeat.child);
-                    nfa_add_epsilon(nfa, current, inner_end);
-                    current = inner_end;
-                    if (i >= node->repeat.min) {
-                        nfa_add_epsilon(nfa, current, end);
-                    }
-                }
-                nfa_add_epsilon(nfa, current, end);
-            }
-            return end;
-        }
-        case AST_GROUP: {
-            // 创建分组开始状态
-            size_t group_start = nfa->state_count;
-            nfa_add_state(nfa, false);
-            
-            // 记录分组开始
-            nfa->capture_group_states = realloc(nfa->capture_group_states, 
-                (nfa->capture_group_count + 2) * sizeof(size_t));
-            nfa->capture_group_states[nfa->capture_group_count++] = group_start;
-            
-            // 构建内部表达式
-            size_t inner_end = build_ast(nfa, node->group.child);
-            
-            // 创建分组结束状态
-            size_t group_end = nfa->state_count;
-            nfa_add_state(nfa, false);
-            
-            // 记录分组结束
-            nfa->capture_group_states[nfa->capture_group_count++] = group_end;
-            
-            // 创建最终的结束状态
-            size_t final_end = nfa->state_count;
-            nfa_add_state(nfa, false);
-            
-            // 连接：start -> group_start -> inner -> group_end -> final_end
-            nfa_add_epsilon(nfa, start, group_start);
-            nfa_add_epsilon(nfa, inner_end, group_end);
-            nfa_add_epsilon(nfa, group_end, final_end);
-            
-            return final_end;
+            nfa_add_edge(nfa, *start, *end, trans);
+            break;
         }
         case AST_CHAR_CLASS: {
-            size_t end = nfa->state_count;
+            *end = nfa->state_count;
             nfa_add_state(nfa, false);
-            
             NFATransition trans = {.type = TRANS_CHAR_CLASS};
             trans.char_class.negated = node->char_class.negated;
             trans.char_class.chars = node->char_class.chars;
             trans.char_class.chars_len = node->char_class.chars_len;
             trans.char_class.ranges = node->char_class.ranges;
             trans.char_class.ranges_len = node->char_class.ranges_len;
+            nfa_add_edge(nfa, *start, *end, trans);
+            break;
+        }
+        case AST_GROUP: {
+            // 记录分组开始
+            nfa->capture_group_states = realloc(nfa->capture_group_states, 
+                (nfa->capture_group_count + 2) * sizeof(size_t));
+            nfa->capture_group_states[nfa->capture_group_count++] = *start;
             
-            nfa_add_edge(nfa, start, end, trans);
-            return end;
+            // 构建内部表达式
+            build_expr(nfa, node->group.child, start, end);
+            
+            // 记录分组结束
+            nfa->capture_group_states[nfa->capture_group_count++] = *end;
+            break;
         }
         default: {
-            // 对于未处理的类型，直接返回结束状态
-            size_t end = nfa->state_count;
-            nfa_add_state(nfa, false);
-            nfa_add_epsilon(nfa, start, end);
-            return end;
+            *end = *start;
+            break;
         }
+    }
+}
+
+// 构建重复（量词）
+static void build_repeat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
+    size_t inner_start, inner_end;
+    build_atom(nfa, node->repeat.child, &inner_start, &inner_end);
+    
+    *start = nfa->state_count;
+    nfa_add_state(nfa, false);
+    *end = nfa->state_count;
+    nfa_add_state(nfa, false);
+    
+    if (node->repeat.min == 0 && node->repeat.max == 0) {
+        // *: 0次或多次
+        nfa_add_epsilon(nfa, *start, *end);              // 0次
+        nfa_add_epsilon(nfa, *start, inner_start);       // 至少1次
+        nfa_add_epsilon(nfa, inner_end, inner_start);    // 循环
+        nfa_add_epsilon(nfa, inner_end, *end);           // 退出
+    } else if (node->repeat.min == 1 && node->repeat.max == 0) {
+        // +: 1次或多次
+        nfa_add_epsilon(nfa, *start, inner_start);       // 至少1次
+        nfa_add_epsilon(nfa, inner_end, inner_start);    // 循环
+        nfa_add_epsilon(nfa, inner_end, *end);           // 退出
+    } else if (node->repeat.min == 0 && node->repeat.max == 1) {
+        // ?: 0次或1次
+        nfa_add_epsilon(nfa, *start, *end);              // 0次
+        nfa_add_epsilon(nfa, *start, inner_start);       // 1次
+        nfa_add_epsilon(nfa, inner_end, *end);
+    } else {
+        // {m,n}: m到n次
+        size_t current = *start;
+        size_t max = node->repeat.max > 0 ? node->repeat.max : node->repeat.min;
+        
+        for (size_t i = 0; i < max; i++) {
+            size_t s, e;
+            build_atom(nfa, node->repeat.child, &s, &e);
+            nfa_add_epsilon(nfa, current, s);
+            current = e;
+            
+            if (i >= node->repeat.min) {
+                // 可选的
+                nfa_add_epsilon(nfa, current, *end);
+            }
+        }
+        nfa_add_epsilon(nfa, current, *end);
+    }
+}
+
+// 构建连接
+static void build_concat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
+    size_t current_start, current_end;
+    bool first = true;
+    
+    for (size_t i = 0; i < node->concat.child_count; i++) {
+        size_t s, e;
+        build_expr(nfa, node->concat.children[i], &s, &e);
+        
+        if (first) {
+            current_start = s;
+            current_end = e;
+            first = false;
+        } else {
+            nfa_add_epsilon(nfa, current_end, s);
+            current_end = e;
+        }
+    }
+    
+    if (first) {
+        // 没有子节点
+        *start = nfa->state_count;
+        nfa_add_state(nfa, false);
+        *end = nfa->state_count;
+        nfa_add_state(nfa, false);
+        nfa_add_epsilon(nfa, *start, *end);
+    } else {
+        *start = current_start;
+        *end = current_end;
+    }
+}
+
+// 构建选择
+static void build_alternation(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
+    *start = nfa->state_count;
+    nfa_add_state(nfa, false);
+    *end = nfa->state_count;
+    nfa_add_state(nfa, false);
+    
+    for (size_t i = 0; i < node->alternation.child_count; i++) {
+        size_t s, e;
+        build_expr(nfa, node->alternation.children[i], &s, &e);
+        nfa_add_epsilon(nfa, *start, s);
+        nfa_add_epsilon(nfa, e, *end);
+    }
+}
+
+// 主要的表达式构建函数
+static void build_expr(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
+    if (!node) {
+        *start = nfa->state_count;
+        nfa_add_state(nfa, false);
+        *end = nfa->state_count;
+        nfa_add_state(nfa, false);
+        nfa_add_epsilon(nfa, *start, *end);
+        return;
+    }
+    
+    switch (node->type) {
+        case AST_CHAR:
+        case AST_ANY_CHAR:
+        case AST_CHAR_CLASS:
+        case AST_GROUP:
+            build_atom(nfa, node, start, end);
+            break;
+            
+        case AST_REPEAT:
+            build_repeat(nfa, node, start, end);
+            break;
+            
+        case AST_CONCAT:
+            build_concat(nfa, node, start, end);
+            break;
+            
+        case AST_ALTERNATION:
+            build_alternation(nfa, node, start, end);
+            break;
+            
+        default:
+            *start = nfa->state_count;
+            nfa_add_state(nfa, false);
+            *end = nfa->state_count;
+            nfa_add_state(nfa, false);
+            nfa_add_epsilon(nfa, *start, *end);
+            break;
     }
 }
 
 NFA* nfa_from_ast(AstNode *ast) {
     NFA *nfa = nfa_new();
     
-    // 重新初始化
-    nfa->state_count = 0;
-    nfa->edge_count = 0;
-    nfa->capture_group_count = 0;
-    free(nfa->states);
-    free(nfa->edges);
-    free(nfa->capture_group_states);
-    nfa->states = NULL;
-    nfa->edges = NULL;
-    nfa->capture_group_states = NULL;
-    nfa->state_capacity = 0;
-    nfa->edge_capacity = 0;
+    // 构建表达式
+    size_t start, end;
+    build_expr(nfa, ast, &start, &end);
     
-    // 创建起始状态
-    nfa->start_state = 0;
-    nfa_add_state(nfa, false);
+    // 设置起始和接受状态
+    nfa->start_state = start;
     
-    // 构建 AST
-    nfa->accept_state = build_ast(nfa, ast);
-    
-    // 确保接受状态被标记
-    if (nfa->accept_state < nfa->state_count) {
-        nfa->states[nfa->accept_state].is_accept = true;
-    }
+    // 添加接受状态
+    size_t accept = nfa->state_count;
+    nfa_add_state(nfa, true);
+    nfa_add_epsilon(nfa, end, accept);
+    nfa->accept_state = accept;
     
     return nfa;
 }
 
 size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *result_count) {
-    if (count == 0) {
+    if (count == 0 || !states) {
         *result_count = 0;
         return NULL;
     }
@@ -219,7 +265,7 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
     size_t *stack = malloc(count * sizeof(size_t));
     size_t stack_top = 0;
     
-    // 初始化栈和访问标记
+    // 初始化栈
     for (size_t i = 0; i < count; i++) {
         if (!visited[states[i]]) {
             visited[states[i]] = true;
@@ -227,7 +273,6 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
         }
     }
     
-    // 结果数组
     size_t *closure = malloc(nfa->state_count * sizeof(size_t));
     *result_count = 0;
     
@@ -259,6 +304,7 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
     free(stack);
     return closure;
 }
+
 void nfa_print_transition_table(NFA *nfa) {
     printf("=== NFA 状态转移表 ===\n");
     printf("起始状态: %zu, 接受状态: %zu\n", nfa->start_state, nfa->accept_state);
