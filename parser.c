@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdint.h>
 
 typedef struct {
     const char* pattern;
@@ -96,6 +97,8 @@ static AstNode* parse_char_class(Parser *p) {
     
     return ast_new_char_class(&class);
 }
+
+
 static AstNode* parse_atom(Parser* p);
 static AstNode* parse_expr(Parser* p);
 
@@ -117,10 +120,10 @@ static AstNode* parse_atom(Parser* p) {
         return parse_char_class(p);
     case '^':
         parser_advance(p);
-        return ast_new_char('\0');
+        return ast_new_start();
     case '$':
         parser_advance(p);
-        return ast_new_char('\0');
+        return ast_new_end();
     case '.':
         parser_advance(p);
         return ast_new_any_char();
@@ -129,9 +132,9 @@ static AstNode* parse_atom(Parser* p) {
         char c = p->current;
         parser_advance(p);
         switch (c) {
-        case 'd': return ast_new_char('\0');
-        case 'w': return ast_new_char('\0');
-        case 's': return ast_new_char('\0');
+        case 'd': return ast_new_digit();
+        case 'w': return ast_new_word();
+        case 's': return ast_new_whitespace();
         default: return ast_new_char(c);
         }
     }
@@ -146,11 +149,11 @@ static AstNode* parse_atom(Parser* p) {
 static AstNode* parse_repeat(Parser* p, AstNode* atom) {
     if (p->current == '*') {
         parser_advance(p);
-        return ast_new_repeat(atom, 0, 0);
+        return ast_new_repeat(atom, 0, SIZE_MAX);
     }
     else if (p->current == '+') {
         parser_advance(p);
-        return ast_new_repeat(atom, 1, 0);
+        return ast_new_repeat(atom, 1, SIZE_MAX);
     }
     else if (p->current == '?') {
         parser_advance(p);
@@ -165,9 +168,14 @@ static AstNode* parse_repeat(Parser* p, AstNode* atom) {
         }
         if (p->current == ',') {
             parser_advance(p);
-            while (isdigit(p->current)) {
-                max = max * 10 + (p->current - '0');
-                parser_advance(p);
+            if (isdigit(p->current)) {
+                while (isdigit(p->current)) {
+                    max = max * 10 + (p->current - '0');
+                    parser_advance(p);
+                }
+            } else {
+                // {m,} 没有上界，设为无限
+                max = SIZE_MAX;
             }
         }
         else {
