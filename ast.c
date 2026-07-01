@@ -1,5 +1,4 @@
 #include "../include/ast.h"
-/*#include "../include/ast.h"*/
 #include <stdlib.h>
 #include <string.h>
 
@@ -52,6 +51,37 @@ AstNode* ast_new_char_class(CharClass* char_class) {
     AstNode* node = calloc(1, sizeof(AstNode));
     node->type = AST_CHAR_CLASS;
     node->char_class = *char_class;
+    return node;
+}
+
+// 新增锚点、预定义类节点实现
+AstNode* ast_new_start(void) {
+    AstNode* node = calloc(1, sizeof(AstNode));
+    node->type = AST_START;
+    return node;
+}
+
+AstNode* ast_new_end(void) {
+    AstNode* node = calloc(1, sizeof(AstNode));
+    node->type = AST_END;
+    return node;
+}
+
+AstNode* ast_new_digit(void) {
+    AstNode* node = calloc(1, sizeof(AstNode));
+    node->type = AST_DIGIT;
+    return node;
+}
+
+AstNode* ast_new_word(void) {
+    AstNode* node = calloc(1, sizeof(AstNode));
+    node->type = AST_WORD;
+    return node;
+}
+
+AstNode* ast_new_whitespace(void) {
+    AstNode* node = calloc(1, sizeof(AstNode));
+    node->type = AST_WHITESPACE;
     return node;
 }
 
