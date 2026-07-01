@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 // 函数原型声明
 static void build_expr(NFA *nfa, AstNode *node, size_t *start, size_t *end);
@@ -70,6 +71,34 @@ static void build_atom(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
             nfa_add_edge(nfa, *start, *end, trans);
             break;
         }
+        case AST_DIGIT: {
+            *end = nfa->state_count;
+            nfa_add_state(nfa, false);
+            NFATransition trans = {.type = TRANS_DIGIT};
+            nfa_add_edge(nfa, *start, *end, trans);
+            break;
+        }
+        case AST_WORD: {
+            *end = nfa->state_count;
+            nfa_add_state(nfa, false);
+            NFATransition trans = {.type = TRANS_WORD};
+            nfa_add_edge(nfa, *start, *end, trans);
+            break;
+        }
+        case AST_WHITESPACE: {
+            *end = nfa->state_count;
+            nfa_add_state(nfa, false);
+            NFATransition trans = {.type = TRANS_WHITESPACE};
+            nfa_add_edge(nfa, *start, *end, trans);
+            break;
+        }
+        case AST_START:
+        case AST_END: {
+            *end = nfa->state_count;
+            nfa_add_state(nfa, false);
+            nfa_add_epsilon(nfa, *start, *end);
+            break;
+        }
         case AST_CHAR_CLASS: {
             *end = nfa->state_count;
             nfa_add_state(nfa, false);
@@ -104,71 +133,57 @@ static void build_atom(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
 
 // 构建重复（量词）- 修复版本
 static void build_repeat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
-    // 首先构建内部表达式（原子）
     size_t inner_start, inner_end;
     build_atom(nfa, node->repeat.child, &inner_start, &inner_end);
-    
-    // 创建新的起始和结束状态
+
     *start = nfa->state_count;
     nfa_add_state(nfa, false);
     *end = nfa->state_count;
     nfa_add_state(nfa, false);
-    
-    if (node->repeat.min == 0 && node->repeat.max == 0) {
-        // *: 0次或多次
-        // 0次: 直接从 start 到 end
+
+    size_t min = node->repeat.min;
+    size_t max = node->repeat.max;
+
+    // Kleene Star: A*  0次或多次
+    if (min == 0 && max == SIZE_MAX) {
         nfa_add_epsilon(nfa, *start, *end);
-        
-        // 1次或多次: 从 start 到 inner_start
         nfa_add_epsilon(nfa, *start, inner_start);
-        
-        // 循环: 从 inner_end 回到 inner_start
         nfa_add_epsilon(nfa, inner_end, inner_start);
-        
-        // 退出: 从 inner_end 到 end
         nfa_add_epsilon(nfa, inner_end, *end);
-        
-        // 注意：这里的关键是 inner_end 到 inner_start 的循环
-        // 以及 inner_end 到 end 的退出路径
-    } else if (node->repeat.min == 1 && node->repeat.max == 0) {
-        // +: 1次或多次
-        // 至少1次: 从 start 到 inner_start
+    }
+    // A+ 1次或多次
+    else if (min == 1 && max == SIZE_MAX) {
         nfa_add_epsilon(nfa, *start, inner_start);
-        
-        // 循环: 从 inner_end 回到 inner_start
         nfa_add_epsilon(nfa, inner_end, inner_start);
-        
-        // 退出: 从 inner_end 到 end
         nfa_add_epsilon(nfa, inner_end, *end);
-    } else if (node->repeat.min == 0 && node->repeat.max == 1) {
-        // ?: 0次或1次
-        // 0次: 从 start 到 end
+    }
+    // A? 0次或1次
+    else if (min == 0 && max == 1) {
         nfa_add_epsilon(nfa, *start, *end);
-        
-        // 1次: 从 start 到 inner_start
         nfa_add_epsilon(nfa, *start, inner_start);
-        
-        // 从 inner_end 到 end
         nfa_add_epsilon(nfa, inner_end, *end);
-    } else {
-        // {m,n}: m到n次
-        size_t current = *start;
-        size_t max = node->repeat.max > 0 ? node->repeat.max : node->repeat.min;
-        
-        for (size_t i = 0; i < max; i++) {
+    }
+    // {m,n} 有限次数
+    else {
+        size_t cur_state = *start;
+        // 必须匹配 min 次
+        for (size_t i = 0; i < min; i++) {
             size_t s, e;
-            // 每次重新构建内部表达式
             build_atom(nfa, node->repeat.child, &s, &e);
-            nfa_add_epsilon(nfa, current, s);
-            current = e;
-            
-            // 如果已经达到最小次数，可以退出
-            if (i >= node->repeat.min - 1) {
-                nfa_add_epsilon(nfa, current, *end);
+            nfa_add_epsilon(nfa, cur_state, s);
+            cur_state = e;
+        }
+        // 可选匹配 min ~ max 次
+        if (max != SIZE_MAX) {
+            for (size_t i = min; i < max; i++) {
+                size_t s, e;
+                build_atom(nfa, node->repeat.child, &s, &e);
+                nfa_add_epsilon(nfa, cur_state, s);
+                nfa_add_epsilon(nfa, cur_state, *end);
+                cur_state = e;
             }
         }
-        // 确保最后能到达 end
-        nfa_add_epsilon(nfa, current, *end);
+        nfa_add_epsilon(nfa, cur_state, *end);
     }
 }
 
@@ -284,39 +299,29 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
         *result_count = 0;
         return NULL;
     }
-    
-    // 使用 visited 数组防止无限循环
+
     bool *visited = calloc(nfa->state_count, sizeof(bool));
     size_t *stack = malloc(nfa->state_count * sizeof(size_t));
     size_t stack_top = 0;
-    
-    // 初始化栈和 visited
-    for (size_t i = 0; i < count; i++) {
-        if (states[i] < nfa->state_count && !visited[states[i]]) {
-            visited[states[i]] = true;
-            stack[stack_top++] = states[i];
-        }
-    }
-    
-    // 结果数组
     size_t *closure = malloc(nfa->state_count * sizeof(size_t));
     *result_count = 0;
-    
-    // 复制初始状态到结果
+
+    // 初始化：入栈 + 加入结果集
     for (size_t i = 0; i < count; i++) {
-        if (states[i] < nfa->state_count && !visited[states[i]]) {
-            visited[states[i]] = true;
-            closure[(*result_count)++] = states[i];
+        size_t s = states[i];
+        if (s < nfa->state_count && !visited[s]) {
+            visited[s] = true;
+            stack[stack_top++] = s;
+            closure[(*result_count)++] = s;
         }
     }
-    
-    // DFS 查找所有 ε-转移（使用 visited 防止循环）
+
     while (stack_top > 0) {
         size_t state = stack[--stack_top];
-        
         for (size_t i = 0; i < nfa->edge_count; i++) {
-            if (nfa->edges[i].from == state && nfa->edges[i].transition.type == TRANS_EPSILON) {
-                size_t to = nfa->edges[i].to;
+            NFAEdge e = nfa->edges[i];
+            if (e.from == state && e.transition.type == TRANS_EPSILON) {
+                size_t to = e.to;
                 if (to < nfa->state_count && !visited[to]) {
                     visited[to] = true;
                     stack[stack_top++] = to;
@@ -325,7 +330,7 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
             }
         }
     }
-    
+
     free(visited);
     free(stack);
     return closure;
