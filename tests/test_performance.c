@@ -1,5 +1,5 @@
-#include "../include/regex.h"
-#include <regex.h>  // POSIX regex
+#include <regex.h>  // POSIX系统正则库，必须加
+#include "../include/myregex.h"
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
