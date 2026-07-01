@@ -65,6 +65,14 @@ AstNode* ast_new_alternation(AstNode **children, size_t count);
 AstNode* ast_new_repeat(AstNode *child, size_t min, size_t max);
 AstNode* ast_new_group(AstNode *child);
 AstNode* ast_new_char_class(CharClass *char_class);
+
+// 新增预定义、锚点节点构造函数
+AstNode* ast_new_start(void);
+AstNode* ast_new_end(void);
+AstNode* ast_new_digit(void);
+AstNode* ast_new_word(void);
+AstNode* ast_new_whitespace(void);
+
 void ast_free(AstNode *node);
 
 #endif
