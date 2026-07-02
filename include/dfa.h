@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include "nfa.h"
 #include "ast.h"
+#include "myregex.h" 
 
 typedef struct {
     size_t id;
@@ -34,5 +35,6 @@ DFA* dfa_from_nfa(NFA *nfa);
 DFA* dfa_minimize(DFA *dfa);
 void dfa_print_transition_table(DFA *dfa);
 char* dfa_to_dot(DFA *dfa);
+bool dfa_match_text(DFA *dfa, const char *text, size_t start_pos, RegexMatch *match);
 
 #endif
