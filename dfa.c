@@ -100,29 +100,11 @@ DFA* dfa_from_nfa(NFA* nfa) {
         size_t* nfa_states = state_sets[dfa_state];
         size_t nfa_count = set_counts[dfa_state];
 
-        // 收集所有可能的字符
+        // ========== 修复：直接使用全部ASCII 0~127作为输入符号 ==========
         char symbols[256];
-        size_t symbol_count = 0;
-
-        for (size_t i = 0; i < nfa_count; i++) {
-            size_t state = nfa_states[i];
-            for (size_t j = 0; j < nfa->edge_count; j++) {
-                if (nfa->edges[j].from == state) {
-                    if (nfa->edges[j].transition.type == TRANS_EPSILON) continue;
-
-                    // 对于字符类，我们需要展开所有可能的字符
-                    // 这里简化处理，只对普通字符
-                    if (nfa->edges[j].transition.type == TRANS_CHAR) {
-                        char c = nfa->edges[j].transition.ch;
-                        // 检查是否已存在
-                        bool found = false;
-                        for (size_t k = 0; k < symbol_count; k++) {
-                            if (symbols[k] == c) { found = true; break; }
-                        }
-                        if (!found) symbols[symbol_count++] = c;
-                    }
-                }
-            }
+        size_t symbol_count = 128;
+        for (int c = 0; c < 128; c++) {
+            symbols[c] = (char)c;
         }
 
         // 对每个字符计算转移
@@ -273,4 +255,61 @@ char* dfa_to_dot(DFA* dfa) {
 
     pos += snprintf(dot + pos, 1024 * 1024 - pos, "}\n");
     return dot;
+}
+
+bool dfa_match_text(DFA *dfa, const char *text, size_t start_pos, RegexMatch *match)
+{
+    if (!dfa || !text)
+        return false;
+
+    size_t cur_state = dfa->start_state;
+    size_t text_len = strlen(text);
+    size_t best_match_end = start_pos;
+    bool has_accept = false;
+
+    // 初始状态如果是接收态，允许空匹配
+    if (dfa->states[cur_state].is_accept)
+    {
+        has_accept = true;
+        best_match_end = start_pos;
+    }
+
+    for (size_t idx = start_pos; idx < text_len; idx++)
+    {
+        char c = text[idx];
+        size_t next_state = (size_t)-1;
+
+        // 遍历所有转移边寻找当前字符对应的跳转
+        for (size_t i = 0; i < dfa->transition_count; i++)
+        {
+            if (dfa->transitions[i].from == cur_state && dfa->transitions[i].symbol == c)
+            {
+                next_state = dfa->transitions[i].to;
+                break;
+            }
+        }
+
+        // 没有可用转移，匹配终止
+        if (next_state == (size_t)-1)
+            break;
+
+        cur_state = next_state;
+
+        // 贪心保存最长合法匹配位置
+        if (dfa->states[cur_state].is_accept)
+        {
+            has_accept = true;
+            best_match_end = idx + 1;
+        }
+    }
+
+    if (has_accept && match != NULL)
+    {
+        match->start = start_pos;
+        match->end = best_match_end;
+        match->group_count = 0;
+        match->groups = NULL;
+    }
+
+    return has_accept;
 }
