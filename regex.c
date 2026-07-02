@@ -96,6 +96,12 @@ void regex_free(Regex *regex) {
 // 核心匹配函数：从指定位置开始匹配
 static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexMatch *match) {
     if (!regex || !text || !regex->nfa) return false;
+
+    // ============ 新增：DFA 模式优先匹配 ============
+    if (regex->mode == REGEX_MODE_DFA && regex->dfa != NULL)
+    {
+        return dfa_match_text(regex->dfa, text, pos, match);
+    }
     
     NFA *nfa = regex->nfa;
     size_t text_len = strlen(text);
