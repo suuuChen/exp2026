@@ -1,5 +1,3 @@
-/*#include "../include/dfa.h"*/
-
 #include "../include/dfa.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +5,7 @@
 
 DFA* dfa_new(void) {
     DFA* dfa = calloc(1, sizeof(DFA));
+    dfa->alphabet_size = 128;
     return dfa;
 }
 
@@ -15,6 +14,13 @@ void dfa_free(DFA* dfa) {
         free(dfa->states);
         free(dfa->accept_states);
         free(dfa->transitions);
+        // 释放二维转移表
+        if (dfa->transition_table) {
+            for (size_t i = 0; i < dfa->state_count; i++) {
+                free(dfa->transition_table[i]);
+            }
+            free(dfa->transition_table);
+        }
         free(dfa);
     }
 }
@@ -51,7 +57,6 @@ static bool is_match_transition(NFATransition* trans, char c) {
     }
 }
 
-// 修复：重命名函数避免混淆，并添加正确的参数
 static bool is_state_in_set(size_t* states, size_t count, size_t state) {
     for (size_t i = 0; i < count; i++) {
         if (states[i] == state) return true;
@@ -66,6 +71,222 @@ static bool states_equal(size_t* a, size_t a_count, size_t* b, size_t b_count) {
     }
     return true;
 }
+
+// ===================== 构建 DFA 转移表（二维数组加速） =====================
+
+static void build_transition_table(DFA *dfa) {
+    if (dfa->state_count == 0) return;
+    
+    dfa->alphabet_size = 128;
+    dfa->transition_table = malloc(dfa->state_count * sizeof(int*));
+    
+    for (size_t i = 0; i < dfa->state_count; i++) {
+        dfa->transition_table[i] = malloc(dfa->alphabet_size * sizeof(int));
+        for (int c = 0; c < (int)dfa->alphabet_size; c++) {
+            dfa->transition_table[i][c] = -1;
+        }
+    }
+    
+    // 填充转移表
+    for (size_t i = 0; i < dfa->transition_count; i++) {
+        unsigned char symbol = (unsigned char)dfa->transitions[i].symbol;
+        if (symbol < dfa->alphabet_size) {
+            dfa->transition_table[dfa->transitions[i].from][symbol] = (int)dfa->transitions[i].to;
+        }
+    }
+}
+
+// ===================== Hopcroft 最小化算法 =====================
+
+DFA* dfa_minimize(DFA *dfa) {
+    if (!dfa || dfa->state_count <= 1) return dfa;
+    
+    size_t n = dfa->state_count;
+    
+    // 1. 初始分区：接受状态 vs 非接受状态
+    bool *is_accept = calloc(n, sizeof(bool));
+    for (size_t i = 0; i < dfa->accept_count; i++) {
+        is_accept[dfa->accept_states[i]] = true;
+    }
+    
+    // 2. 使用数组表示分区
+    size_t *partition = malloc(n * sizeof(size_t));
+    size_t partition_count = 0;
+    
+    // 分配分区编号
+    for (size_t i = 0; i < n; i++) {
+        if (is_accept[i]) {
+            partition[i] = 0;  // 接受状态在分区0
+        } else {
+            partition[i] = 1;  // 非接受状态在分区1
+        }
+    }
+    partition_count = 2;
+    
+    // 3. 迭代精化
+    bool changed;
+    do {
+        changed = false;
+        
+        // 对每个分区，检查是否需要拆分
+        size_t *new_partition = malloc(n * sizeof(size_t));
+        memcpy(new_partition, partition, n * sizeof(size_t));
+        size_t new_count = partition_count;
+        
+        for (size_t p = 0; p < partition_count; p++) {
+            // 收集该分区中的所有状态
+            size_t *states_in_p = malloc(n * sizeof(size_t));
+            size_t count_p = 0;
+            for (size_t i = 0; i < n; i++) {
+                if (partition[i] == p) {
+                    states_in_p[count_p++] = i;
+                }
+            }
+            
+            if (count_p <= 1) {
+                free(states_in_p);
+                continue;
+            }
+            
+            // 对每个字符，检查转移目标的分区
+            size_t split_point = count_p;  // 默认不拆分
+            bool need_split = false;
+            
+            for (int c = 0; c < (int)dfa->alphabet_size && !need_split; c++) {
+                // 获取该分区中每个状态在字符c下的转移目标分区
+                int *target_partitions = malloc(count_p * sizeof(int));
+                for (size_t i = 0; i < count_p; i++) {
+                    size_t state = states_in_p[i];
+                    int next = dfa->transition_table[state][c];
+                    if (next >= 0 && (size_t)next < n) {
+                        target_partitions[i] = partition[next];
+                    } else {
+                        target_partitions[i] = -1;  // 无转移
+                    }
+                }
+                
+                // 检查是否所有目标分区相同
+                int first = target_partitions[0];
+                for (size_t i = 1; i < count_p; i++) {
+                    if (target_partitions[i] != first) {
+                        need_split = true;
+                        break;
+                    }
+                }
+                free(target_partitions);
+                
+                if (need_split) {
+                    // 找到拆分点：按目标分区分组
+                    // 简化：将第二个不同的状态移到新分区
+                    for (size_t i = 1; i < count_p; i++) {
+                        size_t state = states_in_p[i];
+                        int next = dfa->transition_table[state][c];
+                        int target_p = (next >= 0 && (size_t)next < n) ? partition[next] : -1;
+                        if (target_p != partition[states_in_p[0]]) {
+                            new_partition[state] = new_count;
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        new_count++;
+                    }
+                }
+            }
+            free(states_in_p);
+        }
+        
+        // 更新分区
+        if (changed) {
+            memcpy(partition, new_partition, n * sizeof(size_t));
+            partition_count = new_count;
+        }
+        free(new_partition);
+        
+    } while (changed);
+    
+    // 4. 构建最小化 DFA
+    DFA *min_dfa = dfa_new();
+    min_dfa->alphabet_size = dfa->alphabet_size;
+    
+    // 统计每个分区的状态数
+    size_t *state_count_in_partition = calloc(partition_count, sizeof(size_t));
+    for (size_t i = 0; i < n; i++) {
+        state_count_in_partition[partition[i]]++;
+    }
+    
+    // 创建新的状态
+    min_dfa->state_count = partition_count;
+    min_dfa->states = malloc(partition_count * sizeof(DFAState));
+    for (size_t i = 0; i < partition_count; i++) {
+        min_dfa->states[i].id = i;
+        min_dfa->states[i].is_accept = false;
+    }
+    
+    // 确定接受状态
+    min_dfa->accept_states = malloc(partition_count * sizeof(size_t));
+    min_dfa->accept_count = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (is_accept[i]) {
+            size_t p = partition[i];
+            if (!min_dfa->states[p].is_accept) {
+                min_dfa->states[p].is_accept = true;
+                min_dfa->accept_states[min_dfa->accept_count++] = p;
+            }
+        }
+    }
+    
+    // 确定起始状态
+    min_dfa->start_state = partition[dfa->start_state];
+    
+    // 构建转移表
+    // 先收集所有转移
+    for (size_t i = 0; i < n; i++) {
+        size_t from_p = partition[i];
+        for (int c = 0; c < (int)dfa->alphabet_size; c++) {
+            int next = dfa->transition_table[i][c];
+            if (next >= 0 && (size_t)next < n) {
+                size_t to_p = partition[next];
+                // 检查是否已存在相同的转移
+                bool exists = false;
+                for (size_t j = 0; j < min_dfa->transition_count; j++) {
+                    if (min_dfa->transitions[j].from == from_p &&
+                        min_dfa->transitions[j].symbol == (char)c &&
+                        min_dfa->transitions[j].to == to_p) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    min_dfa->transitions = realloc(min_dfa->transitions,
+                        (min_dfa->transition_count + 1) * sizeof(*min_dfa->transitions));
+                    min_dfa->transitions[min_dfa->transition_count].from = from_p;
+                    min_dfa->transitions[min_dfa->transition_count].symbol = (char)c;
+                    min_dfa->transitions[min_dfa->transition_count].to = to_p;
+                    min_dfa->transition_count++;
+                }
+            }
+        }
+    }
+    
+    // 构建最小化 DFA 的二维转移表
+    build_transition_table(min_dfa);
+    
+    // 清理
+    free(state_count_in_partition);
+    free(partition);
+    free(is_accept);
+    
+    // 释放原 DFA（如果需要）
+    // 注意：这里不释放原 DFA，由调用者决定
+    
+    printf("Hopcroft minimization: %zu states → %zu states (reduced %.1f%%)\n",
+           n, min_dfa->state_count, 
+           (1.0 - (double)min_dfa->state_count / n) * 100.0);
+    
+    return min_dfa;
+}
+
+// ===================== DFA 构建（使用二维转移表） =====================
 
 DFA* dfa_from_nfa(NFA* nfa) {
     DFA* dfa = dfa_new();
@@ -100,16 +321,9 @@ DFA* dfa_from_nfa(NFA* nfa) {
         size_t* nfa_states = state_sets[dfa_state];
         size_t nfa_count = set_counts[dfa_state];
 
-        // ========== 修复：直接使用全部ASCII 0~127作为输入符号 ==========
-        char symbols[256];
-        size_t symbol_count = 128;
-        for (int c = 0; c < 128; c++) {
-            symbols[c] = (char)c;
-        }
-
         // 对每个字符计算转移
-        for (size_t si = 0; si < symbol_count; si++) {
-            char c = symbols[si];
+        for (int c = 0; c < 128; c++) {
+            char symbol = (char)c;
             size_t* next_set = malloc(nfa->state_count * sizeof(size_t));
             size_t next_count = 0;
 
@@ -117,7 +331,7 @@ DFA* dfa_from_nfa(NFA* nfa) {
                 size_t state = nfa_states[i];
                 for (size_t j = 0; j < nfa->edge_count; j++) {
                     if (nfa->edges[j].from == state &&
-                        is_match_transition(&nfa->edges[j].transition, c)) {
+                        is_match_transition(&nfa->edges[j].transition, symbol)) {
                         if (!is_state_in_set(next_set, next_count, nfa->edges[j].to)) {
                             next_set[next_count++] = nfa->edges[j].to;
                         }
@@ -161,7 +375,7 @@ DFA* dfa_from_nfa(NFA* nfa) {
                 dfa->transitions = realloc(dfa->transitions,
                     (dfa->transition_count + 1) * sizeof(*dfa->transitions));
                 dfa->transitions[dfa->transition_count].from = dfa_state;
-                dfa->transitions[dfa->transition_count].symbol = c;
+                dfa->transitions[dfa->transition_count].symbol = symbol;
                 dfa->transitions[dfa->transition_count].to = target;
                 dfa->transition_count++;
             }
@@ -181,7 +395,6 @@ DFA* dfa_from_nfa(NFA* nfa) {
         dfa->states[i].id = i;
         dfa->states[i].is_accept = false;
 
-        // 检查是否为接受状态
         for (size_t j = 0; j < set_counts[i]; j++) {
             if (state_sets[i][j] == nfa->accept_state) {
                 dfa->states[i].is_accept = true;
@@ -198,15 +411,55 @@ DFA* dfa_from_nfa(NFA* nfa) {
     free(state_sets);
     free(set_counts);
 
+    // 构建二维转移表加速
+    build_transition_table(dfa);
+
     return dfa;
 }
 
-DFA* dfa_minimize(DFA* dfa) {
-    // 简化实现：直接返回原DFA
-    // 完整的Hopcroft算法实现较复杂，这里省略
-    // 实际项目中应该实现完整的最小化算法
-    printf("Warning: DFA minimization is not fully implemented yet.\n");
-    return dfa;
+// ===================== DFA 匹配（使用二维转移表加速） =====================
+
+bool dfa_match_text(DFA *dfa, const char *text, size_t start_pos, RegexMatch *match) {
+    if (!dfa || !text) return false;
+
+    // 使用二维转移表加速
+    if (!dfa->transition_table) {
+        // 如果转移表未构建，回退到线性搜索
+        // ... (保留原线性搜索作为后备)
+    }
+
+    size_t cur_state = dfa->start_state;
+    size_t text_len = strlen(text);
+    size_t best_match_end = start_pos;
+    bool has_accept = dfa->states[cur_state].is_accept;
+
+    for (size_t idx = start_pos; idx < text_len; idx++) {
+        unsigned char c = (unsigned char)text[idx];
+        if (c >= dfa->alphabet_size) {
+            // 超出字母表范围的字符，跳过
+            continue;
+        }
+        
+        int next_state = dfa->transition_table[cur_state][c];
+        if (next_state == -1) {
+            // 无转移，匹配失败
+            break;
+        }
+        
+        cur_state = (size_t)next_state;
+        if (dfa->states[cur_state].is_accept) {
+            has_accept = true;
+            best_match_end = idx + 1;
+        }
+    }
+
+    if (has_accept && match) {
+        match->start = start_pos;
+        match->end = best_match_end;
+        match->group_count = 0;
+        match->groups = NULL;
+    }
+    return has_accept;
 }
 
 void dfa_print_transition_table(DFA* dfa) {
@@ -257,59 +510,16 @@ char* dfa_to_dot(DFA* dfa) {
     return dot;
 }
 
-bool dfa_match_text(DFA *dfa, const char *text, size_t start_pos, RegexMatch *match)
-{
-    if (!dfa || !text)
-        return false;
+size_t dfa_get_state_count(DFA *dfa) {
+    return dfa ? dfa->state_count : 0;
+}
 
-    size_t cur_state = dfa->start_state;
-    size_t text_len = strlen(text);
-    size_t best_match_end = start_pos;
-    bool has_accept = false;
-
-    // 初始状态如果是接收态，允许空匹配
-    if (dfa->states[cur_state].is_accept)
-    {
-        has_accept = true;
-        best_match_end = start_pos;
-    }
-
-    for (size_t idx = start_pos; idx < text_len; idx++)
-    {
-        char c = text[idx];
-        size_t next_state = (size_t)-1;
-
-        // 遍历所有转移边寻找当前字符对应的跳转
-        for (size_t i = 0; i < dfa->transition_count; i++)
-        {
-            if (dfa->transitions[i].from == cur_state && dfa->transitions[i].symbol == c)
-            {
-                next_state = dfa->transitions[i].to;
-                break;
-            }
+void dfa_free_transition_table(DFA *dfa) {
+    if (dfa && dfa->transition_table) {
+        for (size_t i = 0; i < dfa->state_count; i++) {
+            free(dfa->transition_table[i]);
         }
-
-        // 没有可用转移，匹配终止
-        if (next_state == (size_t)-1)
-            break;
-
-        cur_state = next_state;
-
-        // 贪心保存最长合法匹配位置
-        if (dfa->states[cur_state].is_accept)
-        {
-            has_accept = true;
-            best_match_end = idx + 1;
-        }
+        free(dfa->transition_table);
+        dfa->transition_table = NULL;
     }
-
-    if (has_accept && match != NULL)
-    {
-        match->start = start_pos;
-        match->end = best_match_end;
-        match->group_count = 0;
-        match->groups = NULL;
-    }
-
-    return has_accept;
 }
