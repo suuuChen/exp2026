@@ -101,4 +101,103 @@ static TestCase grep_test_suite[] = {
 
 #define TEST_COUNT (sizeof(grep_test_suite) / sizeof(TestCase))
 
+// ===================== 测试运行器 =====================
+
+typedef struct {
+    int total;
+    int passed;
+    int failed;
+    int skipped;
+    char error_msg[256];
+} TestResult;
+
+static void run_test_case(TestCase* tc, RegexMode mode, TestResult* result) {
+    result->total++;
+
+    const char* error = NULL;
+    Regex* regex = regex_compile(tc->pattern, mode, &error);
+
+    if (!regex) {
+        result->failed++;
+        printf("  ❌ %s: 编译失败 - %s\n", tc->description, error ? error : "unknown");
+        return;
+    }
+
+    RegexMatch match;
+    bool matched = regex_match(regex, tc->text, &match);
+
+    bool success = (matched == (tc->expected_match == 1));
+    if (success && matched) {
+        if (tc->expected_start >= 0) {
+            success = (match.start == (size_t)tc->expected_start &&
+                match.end == (size_t)tc->expected_end);
+        }
+    }
+
+    if (success) {
+        result->passed++;
+        printf("  ✅ %s: 通过\n", tc->description);
+    }
+    else {
+        result->failed++;
+        printf("  ❌ %s: 失败 - ", tc->description);
+        printf("期望 %s", tc->expected_match ? "匹配" : "不匹配");
+        if (matched) {
+            printf(", 实际匹配 [%zu, %zu)", match.start, match.end);
+        }
+        else {
+            printf(", 实际不匹配");
+        }
+        printf("\n");
+    }
+
+    regex_free(regex);
+}
+
+static void run_test_suite(RegexMode mode, const char* mode_name) {
+    TestResult result = { 0 };
+
+    printf("\n========== 测试模式: %s ==========\n", mode_name);
+    printf("总用例数: %zu\n", TEST_COUNT);
+    printf("\n");
+
+    for (size_t i = 0; i < TEST_COUNT; i++) {
+        run_test_case(&grep_test_suite[i], mode, &result);
+    }
+
+    printf("\n---------- 测试结果 ----------\n");
+    printf("总用例: %d\n", result.total);
+    printf("通过: %d\n", result.passed);
+    printf("失败: %d\n", result.failed);
+
+    double pass_rate = (double)result.passed / result.total * 100.0;
+    printf("通过率: %.2f%%\n", pass_rate);
+
+    if (pass_rate >= 90.0) {
+        printf("✅ 通过率 >= 90%%，验收通过！\n");
+    }
+    else {
+        printf("⚠️ 通过率 < 90%%，需要改进\n");
+    }
+}
+
+// ===================== 主函数 =====================
+
+int main() {
+    printf("========================================\n");
+    printf("  正则表达式引擎 - Grep 测试集验收\n");
+    printf("========================================\n");
+
+    // 测试 NFA 模式
+    run_test_suite(REGEX_MODE_NFA, "NFA");
+
+    // 测试 DFA 模式
+    run_test_suite(REGEX_MODE_DFA, "DFA");
+
+    printf("\n========================================\n");
+    printf("  测试完成\n");
+    printf("========================================\n");
+
+    return 0;
+}
 
