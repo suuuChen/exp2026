@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include "nfa.h"
 #include "ast.h"
-#include "myregex.h" 
+#include "myregex.h"
 
 typedef struct {
     size_t id;
@@ -27,6 +27,10 @@ typedef struct {
     } *transitions;
     size_t transition_count;
     size_t transition_capacity;
+    
+    // 新增：二维数组加速转移表
+    int **transition_table;   // [state][char] = next_state, -1 表示无转移
+    size_t alphabet_size;      // 字母表大小（通常为 128）
 } DFA;
 
 DFA* dfa_new(void);
@@ -36,5 +40,9 @@ DFA* dfa_minimize(DFA *dfa);
 void dfa_print_transition_table(DFA *dfa);
 char* dfa_to_dot(DFA *dfa);
 bool dfa_match_text(DFA *dfa, const char *text, size_t start_pos, RegexMatch *match);
+
+// 新增：用于测试的辅助函数
+size_t dfa_get_state_count(DFA *dfa);
+void dfa_free_transition_table(DFA *dfa);
 
 #endif
