@@ -1,4 +1,4 @@
-#include "../include/regex.h"
+#include "../include/myregex.h"
 #include "../include/nfa.h"
 #include "../include/dfa.h"
 #include <stdlib.h>
@@ -96,10 +96,20 @@ void regex_free(Regex *regex) {
 // 核心匹配函数：从指定位置开始匹配
 static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexMatch *match) {
     if (!regex || !text || !regex->nfa) return false;
-
-    // ============ 新增：DFA 模式优先匹配 ============
-    if (regex->mode == REGEX_MODE_DFA && regex->dfa != NULL)
-    {
+    
+    // 特殊处理：空模式匹配
+    if (regex->nfa->start_state == regex->nfa->accept_state) {
+        if (match) {
+            match->start = pos;
+            match->end = pos;
+            match->group_count = 0;
+            match->groups = NULL;
+        }
+        return true;
+    }
+    
+    // DFA 模式优先匹配
+    if (regex->mode == REGEX_MODE_DFA && regex->dfa != NULL) {
         return dfa_match_text(regex->dfa, text, pos, match);
     }
     
@@ -126,7 +136,7 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
     size_t end_pos = pos;
     bool accepted = false;
     
-    // 检查空匹配（但不要立即返回，尝试匹配更多）
+    // 检查空匹配
     for (size_t i = 0; i < current_count; i++) {
         if (current_states[i] == nfa->accept_state) {
             accepted = true;
@@ -135,24 +145,21 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
         }
     }
     
-    // 尝试匹配更多字符（贪心）
+    // 贪心匹配：记录最长的匹配
     size_t best_end = pos;
     bool best_accepted = accepted;
-    size_t original_pos = pos;
     
-    // 处理字符 - 尽可能多地匹配
+    // 处理字符
     while (pos < text_len) {
         char c = text[pos];
         size_t *next_states = malloc(nfa->state_count * sizeof(size_t));
         size_t next_count = 0;
         
-        // 对当前所有状态，查找匹配字符的转移
         for (size_t i = 0; i < current_count; i++) {
             size_t state = current_states[i];
             for (size_t j = 0; j < nfa->edge_count; j++) {
                 if (nfa->edges[j].from == state) {
                     if (char_matches_transition(&nfa->edges[j].transition, c)) {
-                        // 检查是否已经存在
                         bool already = false;
                         for (size_t k = 0; k < next_count; k++) {
                             if (next_states[k] == nfa->edges[j].to) {
@@ -169,17 +176,14 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
         }
         
         if (next_count == 0) {
-            // 没有转移，停止
             free(next_states);
             break;
         }
         
-        // 计算 ε-closure
         size_t next_closure_count;
         size_t *next_closure = nfa_epsilon_closure(nfa, next_states, next_count, &next_closure_count);
         free(next_states);
         
-        // 更新当前状态
         current_count = 0;
         for (size_t i = 0; i < next_closure_count; i++) {
             if (next_closure[i] < nfa->state_count) {
@@ -190,7 +194,6 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
         
         pos++;
         
-        // 检查是否到达接受状态
         bool current_accepted = false;
         for (size_t i = 0; i < current_count; i++) {
             if (current_states[i] == nfa->accept_state) {
@@ -200,15 +203,11 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
         }
         
         if (current_accepted) {
-            // 贪心：记录最长的匹配
             best_accepted = true;
             best_end = pos;
             accepted = true;
             end_pos = pos;
         }
-        
-        // 如果没有接受状态，但之前接受过，保留之前的最佳结果
-        // 继续尝试匹配更多字符
     }
     
     // 如果文本结束，检查是否接受
@@ -226,7 +225,6 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
     
     free(current_states);
     
-    // 使用最长的匹配
     if (best_accepted) {
         if (match) {
             match->start = start_pos;
@@ -237,7 +235,6 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
         return true;
     }
     
-    // 尝试原始位置（空匹配）
     if (accepted && match) {
         match->start = start_pos;
         match->end = end_pos;
@@ -248,6 +245,7 @@ static bool match_at_position(Regex *regex, const char *text, size_t pos, RegexM
     
     return false;
 }
+
 bool regex_match(Regex *regex, const char *text, RegexMatch *match) {
     if (!regex || !text) return false;
     return match_at_position(regex, text, 0, match);
@@ -257,17 +255,22 @@ bool regex_search(Regex *regex, const char *text, RegexMatch *match) {
     if (!regex || !text) return false;
     
     size_t len = strlen(text);
+    RegexMatch temp_match;
     
-    // 尝试从每个位置开始匹配
     for (size_t i = 0; i < len; i++) {
-        if (match_at_position(regex, text, i, match)) {
+        if (match_at_position(regex, text, i, &temp_match)) {
+            if (match) {
+                match->start = temp_match.start;
+                match->end = temp_match.end;
+                match->group_count = temp_match.group_count;
+                match->groups = temp_match.groups;
+            }
             return true;
         }
     }
     
     // 尝试空字符串匹配
-    RegexMatch empty_match;
-    if (match_at_position(regex, "", 0, &empty_match)) {
+    if (match_at_position(regex, "", 0, &temp_match)) {
         if (match) {
             match->start = len;
             match->end = len;
@@ -290,9 +293,7 @@ RegexMatches* regex_findall(Regex *regex, const char *text) {
     
     while (pos < len) {
         if (match_at_position(regex, text, pos, &match)) {
-            // 避免无限循环
             if (match.start == match.end) {
-                // 空匹配，移动到下一个位置
                 pos++;
                 continue;
             }
