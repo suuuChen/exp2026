@@ -102,11 +102,19 @@ static void build_atom(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
         case AST_CHAR_CLASS: {
             *end = nfa->state_count;
             nfa_add_state(nfa, false);
-            NFATransition trans = {.type = TRANS_CHAR_CLASS};
+            NFATransition trans;
+            trans.type = TRANS_CHAR_CLASS;
             trans.char_class.negated = node->char_class.negated;
-            trans.char_class.chars = node->char_class.chars;
+            // 深拷贝字符和范围
+            trans.char_class.chars = malloc(node->char_class.chars_len * sizeof(char));
+            if (trans.char_class.chars) {
+                memcpy(trans.char_class.chars, node->char_class.chars, node->char_class.chars_len);
+            }
             trans.char_class.chars_len = node->char_class.chars_len;
-            trans.char_class.ranges = node->char_class.ranges;
+            trans.char_class.ranges = malloc(node->char_class.ranges_len * sizeof(CharRange));
+            if (trans.char_class.ranges) {
+                memcpy(trans.char_class.ranges, node->char_class.ranges, node->char_class.ranges_len * sizeof(CharRange));
+            }
             trans.char_class.ranges_len = node->char_class.ranges_len;
             nfa_add_edge(nfa, *start, *end, trans);
             break;
@@ -131,7 +139,7 @@ static void build_atom(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
     }
 }
 
-// 构建重复（量词）- 修复版本
+// 构建重复（量词）
 static void build_repeat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
     size_t inner_start, inner_end;
     build_atom(nfa, node->repeat.child, &inner_start, &inner_end);
@@ -164,7 +172,7 @@ static void build_repeat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
         nfa_add_epsilon(nfa, inner_end, *end);
     }
     // {m,n} 有限次数
-    else {
+    else if (max != SIZE_MAX) {
         size_t cur_state = *start;
         // 必须匹配 min 次
         for (size_t i = 0; i < min; i++) {
@@ -174,16 +182,36 @@ static void build_repeat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
             cur_state = e;
         }
         // 可选匹配 min ~ max 次
-        if (max != SIZE_MAX) {
-            for (size_t i = min; i < max; i++) {
-                size_t s, e;
-                build_atom(nfa, node->repeat.child, &s, &e);
-                nfa_add_epsilon(nfa, cur_state, s);
-                nfa_add_epsilon(nfa, cur_state, *end);
-                cur_state = e;
-            }
+        for (size_t i = min; i < max; i++) {
+            size_t s, e;
+            build_atom(nfa, node->repeat.child, &s, &e);
+            size_t opt_end = nfa->state_count;
+            nfa_add_state(nfa, false);
+            nfa_add_epsilon(nfa, cur_state, s);
+            nfa_add_epsilon(nfa, cur_state, opt_end);
+            nfa_add_epsilon(nfa, e, opt_end);
+            cur_state = opt_end;
         }
         nfa_add_epsilon(nfa, cur_state, *end);
+    }
+    // {m,} 至少 m 次，无上限
+    else {
+        size_t cur_state = *start;
+        // 必须匹配 m 次
+        for (size_t i = 0; i < min; i++) {
+            size_t s, e;
+            build_atom(nfa, node->repeat.child, &s, &e);
+            nfa_add_epsilon(nfa, cur_state, s);
+            cur_state = e;
+        }
+        // 创建循环结构，允许任意多次
+        nfa_add_epsilon(nfa, cur_state, *end);           // 退出
+        // 再匹配一次，回到 cur_state
+        size_t loop_s, loop_e;
+        build_atom(nfa, node->repeat.child, &loop_s, &loop_e);
+        nfa_add_epsilon(nfa, cur_state, loop_s);
+        nfa_add_epsilon(nfa, loop_e, cur_state);
+        nfa_add_epsilon(nfa, loop_e, *end);
     }
 }
 
@@ -207,7 +235,6 @@ static void build_concat(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
     }
     
     if (first) {
-        // 没有子节点
         *start = nfa->state_count;
         nfa_add_state(nfa, false);
         *end = nfa->state_count;
@@ -248,6 +275,11 @@ static void build_expr(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
     switch (node->type) {
         case AST_CHAR:
         case AST_ANY_CHAR:
+        case AST_DIGIT:
+        case AST_WORD:
+        case AST_WHITESPACE:
+        case AST_START:
+        case AST_END:
         case AST_CHAR_CLASS:
         case AST_GROUP:
             build_atom(nfa, node, start, end);
@@ -278,14 +310,11 @@ static void build_expr(NFA *nfa, AstNode *node, size_t *start, size_t *end) {
 NFA* nfa_from_ast(AstNode *ast) {
     NFA *nfa = nfa_new();
     
-    // 构建表达式
     size_t start, end;
     build_expr(nfa, ast, &start, &end);
     
-    // 设置起始和接受状态
     nfa->start_state = start;
     
-    // 添加接受状态
     size_t accept = nfa->state_count;
     nfa_add_state(nfa, true);
     nfa_add_epsilon(nfa, end, accept);
@@ -306,7 +335,6 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
     size_t *closure = malloc(nfa->state_count * sizeof(size_t));
     *result_count = 0;
 
-    // 初始化：入栈 + 加入结果集
     for (size_t i = 0; i < count; i++) {
         size_t s = states[i];
         if (s < nfa->state_count && !visited[s]) {
@@ -335,7 +363,6 @@ size_t* nfa_epsilon_closure(NFA *nfa, size_t *states, size_t count, size_t *resu
     free(stack);
     return closure;
 }
-
 
 void nfa_print_transition_table(NFA *nfa) {
     printf("=== NFA 状态转移表 ===\n");
