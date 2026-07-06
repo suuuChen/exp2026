@@ -1,4 +1,4 @@
-#include <regex.h>  // POSIX系统正则库，必须加
+#include <regex.h>  // POSIX系统正则库
 #include "../include/myregex.h"
 #include <stdio.h>
 #include <time.h>
@@ -69,9 +69,32 @@ void performance_test(const char* pattern, const char* text, int iterations) {
         printf("  Compilation: %.2f ms\n", posix_compile_time);
         printf("  Matching: %.2f ms (%d matches)\n", posix_time, posix_matches);
 
-        if (posix_time > 0) {
-            double ratio = (our_time / posix_time) * 100.0;
-            printf("  Speed ratio: %.2f%% of POSIX\n", ratio);
+        // ============ 核心修改：计算速度占比 ============
+        // 速度占比 = POSIX时间 / 我们的时间 × 100%
+        // 表示：我们的速度是 POSIX 的百分之多少
+        double speed_ratio = (posix_time / our_time) * 100.0;
+        
+        // 耗时比 = 我们的时间 / POSIX时间 × 100%
+        double time_ratio = (our_time / posix_time) * 100.0;
+        
+        printf("\n--- 性能分析 ---\n");
+        printf("  耗时比 (Our/POSIX): %.2f%%\n", time_ratio);
+        printf("  速度占比 (POSIX/Our): %.2f%%\n", speed_ratio);
+        
+        // 判断是否达标（速度占比 ≥ 80%）
+        if (speed_ratio >= 80.0) {
+            printf("  ✅ 达标：速度达到 POSIX 的 %.2f%% (≥ 80%%)\n", speed_ratio);
+        } else {
+            printf("  ❌ 不达标：速度仅为 POSIX 的 %.2f%% (< 80%%)\n", speed_ratio);
+        }
+        
+        // 额外显示倍数关系
+        if (speed_ratio > 100.0) {
+            printf("  🏆 比 POSIX 快 %.2f 倍\n", speed_ratio / 100.0);
+        } else if (speed_ratio < 100.0) {
+            printf("  ⚠️ 比 POSIX 慢 %.2f 倍\n", 100.0 / speed_ratio);
+        } else {
+            printf("  ✅ 与 POSIX 速度相同\n");
         }
     }
 
@@ -151,6 +174,8 @@ void test_search_operations() {
     printf("========================================\n\n");
 }
 
+
+
 int main() {
     printf("Performance Test: Our Regex Engine vs POSIX\n");
     printf("===========================================\n\n");
@@ -162,6 +187,7 @@ int main() {
     test_catastrophic_backtracking();
     test_search_operations();
 
+   
     printf("=== Performance Test Completed ===\n");
     return 0;
 }
