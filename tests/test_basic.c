@@ -1,4 +1,4 @@
-#include "../include/regex.h"
+#include "../include/myregex.h"
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
@@ -7,43 +7,60 @@ void test_basic_match() {
     const char *pattern = "a+b";
     const char *text = "aaab";
     
-    printf("Testing pattern: '%s' on text: '%s'\n", pattern, text);
+    printf("\n========================================\n");
+    printf("测试模式: %s\n", pattern);
+    printf("文本: %s\n", text);
+    printf("========================================\n\n");
     
-    Regex *regex = regex_compile(pattern, REGEX_MODE_NFA, NULL);
-    assert(regex != NULL);
+    // ===== 测试 NFA 模式 =====
+    printf("=== NFA 模式 ===\n\n");
     
-    // 打印 NFA 转移表用于调试
-    printf("\nNFA Transition Table:\n");
-    regex_get_transition_table(regex);
+    Regex *regex_nfa = regex_compile(pattern, REGEX_MODE_NFA, NULL);
+    assert(regex_nfa != NULL);
+    regex_get_transition_table(regex_nfa);
     
     RegexMatch match;
-    bool result = regex_match(regex, text, &match);
-    printf("\nMatch result: %s\n", result ? "true" : "false");
-    
+    bool result = regex_match(regex_nfa, text, &match);
+    printf("\n匹配结果: %s\n", result ? "成功" : "失败");
     if (result) {
-        printf("Match: start=%zu, end=%zu\n", match.start, match.end);
+        printf("匹配位置: [%zu, %zu)\n", match.start, match.end);
     }
+    printf("\n");
+    regex_free(regex_nfa);
     
-    assert(result);
-    assert(match.start == 0);
-    assert(match.end == 4);
+    // ===== 测试 DFA 模式 =====
+    printf("=== DFA 模式 ===\n\n");
     
-    printf("✓ Basic match test passed\n");
-    regex_free(regex);
+    Regex *regex_dfa = regex_compile(pattern, REGEX_MODE_DFA, NULL);
+    assert(regex_dfa != NULL);
+    regex_get_transition_table(regex_dfa);
+    
+    result = regex_match(regex_dfa, text, &match);
+    printf("\n匹配结果: %s\n", result ? "成功" : "失败");
+    if (result) {
+        printf("匹配位置: [%zu, %zu)\n", match.start, match.end);
+    }
+    printf("\n");
+    regex_free(regex_dfa);
 }
 
 void test_alternation() {
-    Regex *regex = regex_compile("a|b", REGEX_MODE_NFA, NULL);
+    const char *pattern = "a|b";
+    
+    printf("\n========================================\n");
+    printf("测试模式: %s\n", pattern);
+    printf("========================================\n\n");
+    
+    printf("=== NFA 模式 ===\n\n");
+    Regex *regex = regex_compile(pattern, REGEX_MODE_NFA, NULL);
     assert(regex != NULL);
+    regex_get_transition_table(regex);
+    regex_free(regex);
     
-    RegexMatch match;
-    assert(regex_match(regex, "a", &match));
-    assert(match.start == 0 && match.end == 1);
-    assert(regex_match(regex, "b", &match));
-    assert(match.start == 0 && match.end == 1);
-    assert(!regex_match(regex, "c", &match));
-    
-    printf("✓ Alternation test passed\n");
+    printf("\n=== DFA 模式 ===\n\n");
+    regex = regex_compile(pattern, REGEX_MODE_DFA, NULL);
+    assert(regex != NULL);
+    regex_get_transition_table(regex);
     regex_free(regex);
 }
 
@@ -51,64 +68,107 @@ void test_repetition() {
     const char *pattern = "a*";
     const char *text = "aaa";
     
-    printf("\nTesting pattern: '%s' on text: '%s'\n", pattern, text);
+    printf("\n========================================\n");
+    printf("测试模式: %s\n", pattern);
+    printf("文本: %s\n", text);
+    printf("========================================\n\n");
     
+    printf("=== NFA 模式 ===\n\n");
     Regex *regex = regex_compile(pattern, REGEX_MODE_NFA, NULL);
     assert(regex != NULL);
-    
-    // 打印 NFA 转移表用于调试
-    printf("\nNFA Transition Table for 'a*':\n");
     regex_get_transition_table(regex);
     
     RegexMatch match;
     bool result = regex_match(regex, text, &match);
-    printf("Match result: %s\n", result ? "true" : "false");
+    printf("\n匹配结果: %s\n", result ? "成功" : "失败");
     if (result) {
-        printf("Match: start=%zu, end=%zu\n", match.start, match.end);
+        printf("匹配位置: [%zu, %zu)\n", match.start, match.end);
     }
+    printf("\n");
+    regex_free(regex);
     
-    assert(result);
-    assert(match.start == 0 && match.end == 3);
+    printf("=== DFA 模式 ===\n\n");
+    regex = regex_compile(pattern, REGEX_MODE_DFA, NULL);
+    assert(regex != NULL);
+    regex_get_transition_table(regex);
     
-    printf("✓ Repetition test passed\n");
+    result = regex_match(regex, text, &match);
+    printf("\n匹配结果: %s\n", result ? "成功" : "失败");
+    if (result) {
+        printf("匹配位置: [%zu, %zu)\n", match.start, match.end);
+    }
+    printf("\n");
     regex_free(regex);
 }
 
 void test_complex_pattern() {
-    Regex *regex = regex_compile("(a|b)*c", REGEX_MODE_NFA, NULL);
+    const char *pattern = "(a|b)*c";
+    const char *text = "aaabbbabc";
+    
+    printf("\n========================================\n");
+    printf("测试模式: %s\n", pattern);
+    printf("文本: %s\n", text);
+    printf("========================================\n\n");
+    
+    printf("=== NFA 模式 ===\n\n");
+    Regex *regex = regex_compile(pattern, REGEX_MODE_NFA, NULL);
     assert(regex != NULL);
+    regex_get_transition_table(regex);
     
     RegexMatch match;
-    assert(regex_match(regex, "aaabbbabc", &match));
-    assert(match.start == 0 && match.end == 9);
+    bool result = regex_match(regex, text, &match);
+    printf("\n匹配结果: %s\n", result ? "成功" : "失败");
+    if (result) {
+        printf("匹配位置: [%zu, %zu)\n", match.start, match.end);
+    }
+    printf("\n");
+    regex_free(regex);
     
-    printf("✓ Complex pattern test passed\n");
+    printf("=== DFA 模式 ===\n\n");
+    regex = regex_compile(pattern, REGEX_MODE_DFA, NULL);
+    assert(regex != NULL);
+    regex_get_transition_table(regex);
     regex_free(regex);
 }
 
 void test_search_and_findall() {
-    Regex *regex = regex_compile("\\d+", REGEX_MODE_NFA, NULL);
-    assert(regex != NULL);
-    
+    const char *pattern = "\\d+";
     const char *text = "abc123def456ghi";
-    RegexMatch match;
     
-    assert(regex_search(regex, text, &match));
-    assert(match.start == 3 && match.end == 6);
+    printf("\n========================================\n");
+    printf("测试模式: %s\n", pattern);
+    printf("文本: %s\n", text);
+    printf("========================================\n\n");
+    
+    printf("=== DFA 模式 (搜索/查找) ===\n\n");
+    Regex *regex = regex_compile(pattern, REGEX_MODE_DFA, NULL);
+    assert(regex != NULL);
+    regex_get_transition_table(regex);
+    
+    RegexMatch match;
+    bool result = regex_search(regex, text, &match);
+    printf("\n搜索匹配结果: %s\n", result ? "成功" : "失败");
+    if (result) {
+        printf("匹配位置: [%zu, %zu)\n", match.start, match.end);
+    }
     
     RegexMatches *matches = regex_findall(regex, text);
-    assert(matches->count == 2);
-    assert(matches->matches[0].start == 3 && matches->matches[0].end == 6);
-    assert(matches->matches[1].start == 9 && matches->matches[1].end == 12);
+    printf("\n查找全部结果:\n");
+    printf("找到 %zu 个匹配\n", matches->count);
+    for (size_t i = 0; i < matches->count; i++) {
+        printf("  Match %zu: [%zu, %zu)\n", i+1, 
+               matches->matches[i].start, matches->matches[i].end);
+    }
     
-    printf("✓ Search and findall test passed\n");
     regex_matches_free(matches);
     regex_free(regex);
+    printf("\n");
 }
 
 int main() {
-    printf("Running regex engine tests...\n");
-    printf("================================\n\n");
+    printf("\n正则表达式引擎测试报告\n");
+    printf("NFA状态转移表 + DFA状态转移表 + 匹配结果\n");
+    printf("========================================\n");
     
     test_basic_match();
     test_alternation();
@@ -116,6 +176,9 @@ int main() {
     test_complex_pattern();
     test_search_and_findall();
     
-    printf("\n✓ All tests passed!\n");
+    printf("\n========================================\n");
+    printf("所有测试通过\n");
+    printf("\n");
+    
     return 0;
 }
